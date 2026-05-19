@@ -1,0 +1,65 @@
+\section{Approach}
+
+\subsection{Dataset}
+
+The Spotify Tracks Dataset is sourced from Kaggle.\footnote{\url{https://www.kaggle.com/datasets/maharshipandya/-spotify-tracks-dataset}}
+It contains 114{,}000 tracks across 114 genres (1{,}000 per genre), each described by metadata and 13 audio features computed by the Spotify API alongside a continuous \textit{popularity} score (0--100).
+
+\subsection{Feature Set}
+
+The 13 audio descriptors used as predictors are listed in Table~\ref{tab:features}.
+
+\begin{table}[h]
+\centering\small\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}llp{5.2cm}@{}}
+\hline
+\textbf{Feature} & \textbf{Type} & \textbf{Description} \\
+\hline
+danceability     & float [0,1]  & Rhythmic suitability for dancing \\
+energy           & float [0,1]  & Perceptual intensity and activity \\
+loudness         & float (dB)   & Overall track loudness \\
+speechiness      & float [0,1]  & Proportion of spoken-word content \\
+acousticness     & float [0,1]  & Confidence of acoustic instrumentation \\
+instrumentalness & float [0,1]  & Likelihood of no vocal content \\
+liveness         & float [0,1]  & Presence of live audience \\
+valence          & float [0,1]  & Musical positiveness \\
+tempo            & float (BPM)  & Estimated beats per minute \\
+duration\_ms     & int (ms)     & Track duration in milliseconds \\
+key              & int [0,11]   & Pitch class of the track \\
+mode             & binary       & Major (1) or minor (0) \\
+time\_signature  & int [3,7]    & Estimated beats per bar \\
+\hline
+\end{tabular}
+\caption{Audio features used as predictors in all experiments.}
+\label{tab:features}
+\end{table}
+
+\subsection{Data Preparation}
+
+One exact duplicate is removed and rows with missing values are dropped, leaving 113{,}999 tracks. A binary \textit{hit} label is constructed per genre: a track is positive if its popularity meets or exceeds the genre's 75th percentile, keeping the threshold genre-relative so niche genres are not disadvantaged. The nominal positive rate is 25\%, with observed per-genre rates between 0.25 and 0.32 (mean $\approx 0.265$) due to ties. All 13 features are then standardised to zero mean and unit variance with \texttt{StandardScaler}.
+
+\subsection{Experimentation Design}
+
+All experiments train and evaluate a separate model per genre using 5-fold stratified cross-validation; F1 is the primary metric throughout.
+
+\paragraph{Experiment 1 — Within-Genre LR (Baseline).}
+L2 LR is tuned first to accuracy then to F1 to motivate metric choice. The final baseline pairs F1-tuned $C$ (\texttt{GridSearchCV}) with per-genre threshold optimisation via the precision-recall curve, yielding $(C^*, \tau^*)$ per genre (mean CV F1 $= 0.467$).
+
+\paragraph{Experiment 2 — Cross-Genre Generalisation.}
+Each baseline model is applied to all 114 genres, producing a $114\times114$ F1 matrix. The mean cross-genre F1 drops to $0.353$ (gap $\approx 0.114$), quantifying domain shift.
+
+\paragraph{Experiment 3 — L1 Regularisation and Feature Selection.}
+L1-penalised LR with F1-tuned $C$ per genre. Coefficient sparsity is analysed to identify domain-invariant features (non-zero in all 114 genres); mean CV F1 $= 0.443$.
+
+\paragraph{Experiment 4 — Random Forest Feature Importance.}
+A 200-tree Random Forest is trained per genre. Gini importances are extracted and compared against L1 coefficients to cross-validate which features consistently drive hit prediction; mean CV F1 $= 0.221$.
+
+\paragraph{Experiment 5 — PCA + Logistic Regression.}
+Per-genre PCA (90\% variance threshold) followed by L2 LR. Component count varies by genre; mean CV F1 $= 0.433$, slightly below baseline.
+
+\paragraph{Experiment 6 — PLS + Logistic Regression.}
+Supervised PLS (components 1--6, tuned by F1) replaces PCA. PLS+LR achieves mean CV F1 $= 0.465$ and outperforms the baseline in 60 of 114 genres.
+
+\subsection{Implementation Details}
+
+All experiments are implemented in Python with scikit-learn~1.7.2, pandas~2.3.3, and NumPy~2.3.5; visualisations use Matplotlib and Seaborn. \texttt{random\_state=42} is set throughout; grid searches and CV loops use \texttt{n\_jobs=-1}. Exp.~1 searches $C \in \{0.001, 0.01, 0.1, 1, 10, 100\}$ with threshold tuning via \texttt{cross\_val\_predict} + \texttt{precision\_recall\_curve}. Exp.~2 re-trains each baseline model on full genre data and predicts with its $\tau^*$. Exp.~3 uses \texttt{penalty=`l1'}, \texttt{solver=`liblinear'}. Exp.~4 uses \texttt{RandomForestClassifier} with \texttt{class\_weight=`balanced'} and averages Gini importances over folds. Exps.~5--6 fit PCA/PLS inside each CV fold to prevent leakage; PLS component count is selected by an inner F1-scoring loop.
